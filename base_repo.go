@@ -130,3 +130,15 @@ func (r *Repo[T]) Exists(ctx context.Context, id uuid.UUID) bool {
 func (r *Repo[T]) WithStore(fn func(store *sync.Map)) {
 	fn(&r.store)
 }
+
+// GetAllByIds returns a map of found objects keyed by their UUIDs.
+// IDs not present in the store are simply omitted from the result.
+func (r *Repo[T]) GetAllByIds(ctx context.Context, ids []uuid.UUID) map[uuid.UUID]T {
+	result := make(map[uuid.UUID]T, len(ids))
+	for _, id := range ids {
+		if v, ok := r.store.Load(id); ok {
+			result[id] = v.(T)
+		}
+	}
+	return result
+}
