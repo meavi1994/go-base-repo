@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"go-base-repo/base-repo"
+	"github.com/avi-yadav/go-base-repo/base-repo"
 	"sync"
 )
 
