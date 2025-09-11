@@ -1,4 +1,4 @@
-module go-base-repo
+module github.com/avi-yadav/go-base-repo
 
 go 1.24.4
 
