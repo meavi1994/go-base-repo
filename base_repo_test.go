@@ -1,26 +1,26 @@
-package main
+package base_repo
 
 import (
 	"context"
 	"fmt"
-	"github.com/avi-yadav/go-base-repo/base-repo"
 	"sync"
+	"testing"
 )
 
 type User struct {
-	base_repo.BaseModel
+	BaseModel
 	Name string
 	Age  int
 }
 
 // Implement Entity interface
-func (u *User) GetBase() *base_repo.BaseModel {
+func (u *User) GetBase() *BaseModel {
 	return &u.BaseModel
 }
 
-func main() {
+func TestBaseRepo(t *testing.T) {
 	ctx := context.Background()
-	userRepo := base_repo.NewRepo[*User]()
+	userRepo := NewRepo[*User]()
 
 	// Create
 	u1 := &User{Name: "Alice", Age: 30}
