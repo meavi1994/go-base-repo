@@ -3,14 +3,15 @@ package base_repo
 import (
 	"context"
 	"github.com/google/uuid"
+	"sync"
 )
 
 type MockRepo[T Entity] struct {
-	Store map[uuid.UUID]T
+	store map[uuid.UUID]T
 }
 
 func NewMockRepo[T Entity](store map[uuid.UUID]T) *MockRepo[T] {
-	return &MockRepo[T]{Store: store}
+	return &MockRepo[T]{store: store}
 }
 
 func (m *MockRepo[T]) Create(ctx context.Context, obj T) uuid.UUID {
@@ -18,12 +19,12 @@ func (m *MockRepo[T]) Create(ctx context.Context, obj T) uuid.UUID {
 	if base.ID == uuid.Nil {
 		base.ID = uuid.New()
 	}
-	m.Store[base.ID] = obj
+	m.store[base.ID] = obj
 	return base.ID
 }
 
 func (m *MockRepo[T]) Get(ctx context.Context, id uuid.UUID) (T, error) {
-	if obj, ok := m.Store[id]; ok {
+	if obj, ok := m.store[id]; ok {
 		return obj, nil
 	}
 	var zero T
@@ -32,7 +33,7 @@ func (m *MockRepo[T]) Get(ctx context.Context, id uuid.UUID) (T, error) {
 
 func (m *MockRepo[T]) GetAll(ctx context.Context) []T {
 	var result []T
-	for _, v := range m.Store {
+	for _, v := range m.store {
 		result = append(result, v)
 	}
 	return result
@@ -41,7 +42,7 @@ func (m *MockRepo[T]) GetAll(ctx context.Context) []T {
 func (m *MockRepo[T]) GetAllByIds(ctx context.Context, ids []uuid.UUID) map[uuid.UUID]T {
 	result := make(map[uuid.UUID]T)
 	for _, id := range ids {
-		if v, ok := m.Store[id]; ok {
+		if v, ok := m.store[id]; ok {
 			result[id] = v
 		}
 	}
@@ -50,16 +51,16 @@ func (m *MockRepo[T]) GetAllByIds(ctx context.Context, ids []uuid.UUID) map[uuid
 
 // Stubbed methods (not needed in most tests, but present to satisfy interface)
 func (m *MockRepo[T]) Update(ctx context.Context, obj T) error {
-	m.Store[obj.GetBase().ID] = obj
+	m.store[obj.GetBase().ID] = obj
 	return nil
 }
 func (m *MockRepo[T]) Delete(ctx context.Context, id uuid.UUID) error {
-	delete(m.Store, id)
+	delete(m.store, id)
 	return nil
 }
 func (m *MockRepo[T]) Find(ctx context.Context, predicate func(T) bool) []T {
 	var r []T
-	for _, v := range m.Store {
+	for _, v := range m.store {
 		if predicate(v) {
 			r = append(r, v)
 		}
@@ -67,7 +68,7 @@ func (m *MockRepo[T]) Find(ctx context.Context, predicate func(T) bool) []T {
 	return r
 }
 func (m *MockRepo[T]) FindFirst(ctx context.Context, predicate func(T) bool) (T, bool) {
-	for _, v := range m.Store {
+	for _, v := range m.store {
 		if predicate(v) {
 			return v, true
 		}
@@ -77,11 +78,15 @@ func (m *MockRepo[T]) FindFirst(ctx context.Context, predicate func(T) bool) (T,
 }
 func (m *MockRepo[T]) Count(ctx context.Context, predicate func(T) bool) int {
 	c := 0
-	for _, v := range m.Store {
+	for _, v := range m.store {
 		if predicate == nil || predicate(v) {
 			c++
 		}
 	}
 	return c
 }
-func (m *MockRepo[T]) Exists(ctx context.Context, id uuid.UUID) bool { _, ok := m.Store[id]; return ok }
+func (m *MockRepo[T]) Exists(ctx context.Context, id uuid.UUID) bool { _, ok := m.store[id]; return ok }
+
+func (r *MockRepo[T]) WithStore(fn func(store *sync.Map)) {
+
+}
