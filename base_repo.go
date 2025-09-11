@@ -17,23 +17,37 @@ type BaseModel struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Entity interface for any object stored in Repo.
+// Entity interface for any object stored in RepoImpl.
 type Entity interface {
 	GetBase() *BaseModel
 }
 
-// Repo is a generic, thread-safe, in-memory repository.
-type Repo[T Entity] struct {
+type Repo[T Entity] interface {
+	Create(ctx context.Context, obj T) uuid.UUID
+	Get(ctx context.Context, id uuid.UUID) (T, error)
+	GetAll(ctx context.Context) []T
+	Update(ctx context.Context, obj T) error
+	Delete(ctx context.Context, id uuid.UUID) error
+	Find(ctx context.Context, predicate func(T) bool) []T
+	FindFirst(ctx context.Context, predicate func(T) bool) (T, bool)
+	Count(ctx context.Context, predicate func(T) bool) int
+	Exists(ctx context.Context, id uuid.UUID) bool
+	WithStore(fn func(store *sync.Map))
+	GetAllByIds(ctx context.Context, ids []uuid.UUID) map[uuid.UUID]T
+}
+
+// RepoImpl is a generic, thread-safe, in-memory repository.
+type RepoImpl[T Entity] struct {
 	store sync.Map // map[uuid.UUID]T
 }
 
 // NewRepo creates a new empty repository.
-func NewRepo[T Entity]() *Repo[T] {
-	return &Repo[T]{}
+func NewRepo[T Entity]() Repo[T] {
+	return &RepoImpl[T]{}
 }
 
 // Create inserts a new object, assigns UUID, and timestamps.
-func (r *Repo[T]) Create(ctx context.Context, obj T) uuid.UUID {
+func (r *RepoImpl[T]) Create(ctx context.Context, obj T) uuid.UUID {
 	base := obj.GetBase()
 	base.ID = uuid.New()
 	base.CreatedAt = time.Now()
@@ -44,7 +58,7 @@ func (r *Repo[T]) Create(ctx context.Context, obj T) uuid.UUID {
 }
 
 // Get retrieves an object by UUID.
-func (r *Repo[T]) Get(ctx context.Context, id uuid.UUID) (T, error) {
+func (r *RepoImpl[T]) Get(ctx context.Context, id uuid.UUID) (T, error) {
 	v, ok := r.store.Load(id)
 	if !ok {
 		var zero T
@@ -54,7 +68,7 @@ func (r *Repo[T]) Get(ctx context.Context, id uuid.UUID) (T, error) {
 }
 
 // GetAll returns a snapshot of all objects.
-func (r *Repo[T]) GetAll(ctx context.Context) []T {
+func (r *RepoImpl[T]) GetAll(ctx context.Context) []T {
 	var result []T
 	r.store.Range(func(_, value any) bool {
 		result = append(result, value.(T))
@@ -64,7 +78,7 @@ func (r *Repo[T]) GetAll(ctx context.Context) []T {
 }
 
 // Update replaces an object and updates the UpdatedAt timestamp.
-func (r *Repo[T]) Update(ctx context.Context, obj T) error {
+func (r *RepoImpl[T]) Update(ctx context.Context, obj T) error {
 	base := obj.GetBase()
 	base.UpdatedAt = time.Now()
 	r.store.Store(base.ID, obj)
@@ -72,13 +86,13 @@ func (r *Repo[T]) Update(ctx context.Context, obj T) error {
 }
 
 // Delete removes an object by UUID.
-func (r *Repo[T]) Delete(ctx context.Context, id uuid.UUID) error {
+func (r *RepoImpl[T]) Delete(ctx context.Context, id uuid.UUID) error {
 	r.store.Delete(id)
 	return nil
 }
 
 // Find returns all objects matching the predicate.
-func (r *Repo[T]) Find(ctx context.Context, predicate func(T) bool) []T {
+func (r *RepoImpl[T]) Find(ctx context.Context, predicate func(T) bool) []T {
 	var result []T
 	r.store.Range(func(_, value any) bool {
 		obj := value.(T)
@@ -91,7 +105,7 @@ func (r *Repo[T]) Find(ctx context.Context, predicate func(T) bool) []T {
 }
 
 // FindFirst returns the first object matching the predicate.
-func (r *Repo[T]) FindFirst(ctx context.Context, predicate func(T) bool) (T, bool) {
+func (r *RepoImpl[T]) FindFirst(ctx context.Context, predicate func(T) bool) (T, bool) {
 	var zero T
 	found := false
 	r.store.Range(func(_, value any) bool {
@@ -107,7 +121,7 @@ func (r *Repo[T]) FindFirst(ctx context.Context, predicate func(T) bool) (T, boo
 }
 
 // Count returns the number of objects optionally matching a predicate.
-func (r *Repo[T]) Count(ctx context.Context, predicate func(T) bool) int {
+func (r *RepoImpl[T]) Count(ctx context.Context, predicate func(T) bool) int {
 	count := 0
 	r.store.Range(func(_, value any) bool {
 		obj := value.(T)
@@ -120,20 +134,20 @@ func (r *Repo[T]) Count(ctx context.Context, predicate func(T) bool) int {
 }
 
 // Exists checks if an object exists by UUID.
-func (r *Repo[T]) Exists(ctx context.Context, id uuid.UUID) bool {
+func (r *RepoImpl[T]) Exists(ctx context.Context, id uuid.UUID) bool {
 	_, ok := r.store.Load(id)
 	return ok
 }
 
 // WithStore allows direct access to the underlying sync.Map for custom operations.
 // Example: bulk updates or advanced queries.
-func (r *Repo[T]) WithStore(fn func(store *sync.Map)) {
+func (r *RepoImpl[T]) WithStore(fn func(store *sync.Map)) {
 	fn(&r.store)
 }
 
 // GetAllByIds returns a map of found objects keyed by their UUIDs.
 // IDs not present in the store are simply omitted from the result.
-func (r *Repo[T]) GetAllByIds(ctx context.Context, ids []uuid.UUID) map[uuid.UUID]T {
+func (r *RepoImpl[T]) GetAllByIds(ctx context.Context, ids []uuid.UUID) map[uuid.UUID]T {
 	result := make(map[uuid.UUID]T, len(ids))
 	for _, id := range ids {
 		if v, ok := r.store.Load(id); ok {
