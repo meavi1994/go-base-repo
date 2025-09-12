@@ -13,6 +13,10 @@ type User struct {
 	Age  int
 }
 
+func (u *User) String() string {
+	return fmt.Sprintf("(%v,%v)", u.Name, u.Age)
+}
+
 // Implement Entity interface
 func (u *User) GetBase() *BaseModel {
 	return &u.BaseModel
@@ -43,6 +47,7 @@ func TestBaseRepo(t *testing.T) {
 
 	// Count
 	fmt.Println("Total users:", userRepo.Count(ctx, nil))
+	fmt.Println(userRepo)
 
 	// Direct store access
 	userRepo.WithStore(func(store *sync.Map) {

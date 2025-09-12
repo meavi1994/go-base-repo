@@ -3,7 +3,9 @@ package base_repo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
+	"strings"
 	"sync"
 	"time"
 )
@@ -155,4 +157,21 @@ func (r *RepoImpl[T]) GetAllByIds(ctx context.Context, ids []uuid.UUID) map[uuid
 		}
 	}
 	return result
+}
+
+// String implements fmt.Stringer to print all entities in the repo.
+func (r *RepoImpl[T]) String() string {
+	var sb strings.Builder
+	sb.WriteString("[")
+	first := true
+	r.store.Range(func(_, value any) bool {
+		if !first {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(fmt.Sprintf("%v", value))
+		first = false
+		return true
+	})
+	sb.WriteString("]")
+	return sb.String()
 }
