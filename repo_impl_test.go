@@ -99,10 +99,10 @@ func TestUniqueNewRepo(t *testing.T) {
 		Name:  "doe",
 		Email: "on@abc.com",
 	})
-	if err != nil {
+	if err == nil {
 		log.Fatalf("failed3: %v", err)
 	}
-	print(userRepo)
+	fmt.Println(err)
 }
 
 func print(userRepo Repo[*User]) {

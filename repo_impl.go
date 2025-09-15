@@ -187,6 +187,59 @@ func (r *RepoImpl[T]) WaitTillNotificationDone() {
 	r.wg.Wait()
 }
 
+func (r *RepoImpl[T]) CompareAndSwap(ctx context.Context, key uuid.UUID, old T, new T) (bool, error) {
+	// The sync.Map.CompareAndSwap method requires the values to be of the same type as stored.
+	swapped := r.store.CompareAndSwap(key, old, new)
+
+	if !swapped {
+		// The value in the map was not 'old', so the operation failed.
+		return false, nil
+	}
+
+	// The swap in the main store succeeded. Now, update the indexes.
+	// We'll use the same pattern as in the `Create` and `Update` methods.
+	if err := r.updateIndexesForCas(old, new); err != nil {
+		// Rollback the main store change.
+		r.store.Store(key, old)
+		return false, err
+	}
+
+	r.notify("cas", new)
+	return true, nil
+}
+func (r *RepoImpl[T]) updateIndexesForCas(old T, new T) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	updatedIndexes := make(map[string]Index[T])
+
+	for name, idx := range r.indexes {
+		// A potential issue: if the index key for 'old' is the same as for 'new',
+		// calling Delete then Insert is inefficient. The Insert method should handle this.
+		// For a non-unique index, Delete removes a specific item from a collection.
+		// For a unique index, Insert handles the replacement.
+
+		idx.Delete(old) // Delete the old object from the index.
+
+		if err := idx.Insert(new); err != nil {
+			// Rollback: Re-insert the old object into indexes that were already updated
+			// or where the Delete was successful.
+			for _, rollbackIdx := range updatedIndexes {
+				rollbackIdx.Insert(old)
+			}
+
+			// We need to re-insert the `old` object into the index where the `new`
+			// object failed to insert.
+			idx.Insert(old)
+
+			return fmt.Errorf("failed to update index %s during CAS: %w", name, err)
+		}
+		updatedIndexes[name] = idx
+	}
+
+	return nil
+}
+
 // String implements fmt.Stringer
 func (r *RepoImpl[T]) String() string {
 	var sb strings.Builder
