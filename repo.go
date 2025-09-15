@@ -25,6 +25,11 @@ type Entity interface {
 	GetBase() *BaseModel
 }
 
+type Event[T any] struct {
+	Type string // "create", "update", "delete", "cas"
+	Obj  T
+}
+
 // Repo interface (public contract).
 type Repo[T Entity] interface {
 	Create(ctx context.Context, obj T) (uuid.UUID, error)
@@ -40,6 +45,5 @@ type Repo[T Entity] interface {
 	GetIndex(name string) (Indexer[T], bool)
 
 	// Subscribers
-	AddSubscriber(fn func(event string, obj T))
-	WaitTillNotificationDone()
+	AddSubscriber(chan Event[T])
 }

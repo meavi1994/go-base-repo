@@ -15,14 +15,12 @@ import (
 type RepoImpl[T Entity] struct {
 	store       sync.Map
 	indexes     map[string]Indexer[T]
-	subscribers []func(event string, obj T)
+	subscribers []chan Event[T]
 	mu          sync.RWMutex
 
 	// WaitGroup for tracking goroutines and a mutex to protect its Add/Done calls
 	// since wg.Add() can't be called concurrently with wg.Wait().
 	subscribersMu sync.RWMutex // Protects the subscribers slice
-	wg            sync.WaitGroup
-	wgMu          sync.Mutex
 }
 
 func NewRepo[T Entity]() *RepoImpl[T] {
@@ -32,24 +30,13 @@ func NewRepo[T Entity]() *RepoImpl[T] {
 }
 
 // notify handles fan-out to subscribers.
-func (r *RepoImpl[T]) notify(event string, obj T) {
+func (r *RepoImpl[T]) notify(eventType string, obj T) {
 	r.subscribersMu.RLock()
 	defer r.subscribersMu.RUnlock()
 
-	// Use a local variable to capture the number of subscribers to avoid a race
-	// condition if the slice changes size.
-	numSubscribers := len(r.subscribers)
-
-	r.wgMu.Lock()
-	r.wg.Add(numSubscribers)
-	r.wgMu.Unlock()
-
-	for _, sub := range r.subscribers {
-		// Start a new goroutine for each subscriber.
-		go func(s func(string, T)) {
-			defer r.wg.Done() // 👈 wg.Done() is now here
-			s(event, obj)
-		}(sub)
+	for _, ch := range r.subscribers {
+		ev := Event[T]{Type: eventType, Obj: obj}
+		ch <- ev
 	}
 }
 
@@ -189,16 +176,11 @@ func (r *RepoImpl[T]) GetIndex(name string) (Indexer[T], bool) {
 	return idx, ok
 }
 
-// Subscribers
-func (r *RepoImpl[T]) AddSubscriber(fn func(event string, obj T)) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.subscribers = append(r.subscribers, fn)
-}
-
-// WaitTillNotificationDone blocks until all pending notification goroutines are finished.
-func (r *RepoImpl[T]) WaitTillNotificationDone() {
-	r.wg.Wait()
+// AddSubscriber registers a channel to receive events.
+func (r *RepoImpl[T]) AddSubscriber(ch chan Event[T]) {
+	r.subscribersMu.Lock()
+	defer r.subscribersMu.Unlock()
+	r.subscribers = append(r.subscribers, ch)
 }
 
 func (r *RepoImpl[T]) CompareAndSwap(ctx context.Context, key uuid.UUID, old T, new T) (bool, error) {

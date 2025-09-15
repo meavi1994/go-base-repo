@@ -49,14 +49,22 @@ func TestNewRepo(t *testing.T) {
 	print(userRepo)
 
 }
-func logger(event string, u *User) {
-	fmt.Println("received : ", event, "->", u)
+func logger(event Event[*User]) {
+	fmt.Println("received : ", event.Type, "->", event.Obj)
+}
+
+func consumer(ch chan Event[*User]) {
+	for e := range ch {
+		logger(e)
+	}
 }
 
 func TestEvents(t *testing.T) {
 	ctx := context.Background()
 	userRepo := NewRepo[*User]()
-	userRepo.AddSubscriber(logger)
+	ch := make(chan Event[*User])
+	userRepo.AddSubscriber(ch)
+	go consumer(ch)
 	userRepo.AddIndex("by_name", NewIndex[string, *User](UserName, cmp.Less[string]))
 	userRepo.AddIndex("by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
 	userRepo.Create(ctx, &User{
@@ -73,7 +81,6 @@ func TestEvents(t *testing.T) {
 	})
 
 	print(userRepo)
-	userRepo.WaitTillNotificationDone()
 
 }
 
