@@ -40,22 +40,22 @@ func (r *RepoImpl[T]) notify(eventType string, obj T) {
 	}
 }
 
-func (r *RepoImpl[T]) rollback(updatedIndexes map[string]Indexer[T], obj T) {
+func (r *RepoImpl[T]) rollback(ctx context.Context, updatedIndexes map[string]Indexer[T], obj T) {
 	for _, rollbackIdx := range updatedIndexes {
-		rollbackIdx.Delete(obj)
+		rollbackIdx.Delete(ctx, obj)
 	}
 }
 
-func (r *RepoImpl[T]) insertIndexes(obj T) error {
+func (r *RepoImpl[T]) insertIndexes(ctx context.Context, obj T) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	updatedIndexes := make(map[string]Indexer[T])
 
 	for name, idx := range r.indexes {
-		if err := idx.Insert(obj); err != nil {
+		if err := idx.Insert(ctx, obj); err != nil {
 			// Rollback on failure
-			r.rollback(updatedIndexes, obj)
+			r.rollback(ctx, updatedIndexes, obj)
 			return fmt.Errorf("failed to insert into index %s: %w", name, err)
 		}
 		updatedIndexes[name] = idx
@@ -71,7 +71,7 @@ func (r *RepoImpl[T]) Create(ctx context.Context, obj T) (uuid.UUID, error) {
 
 	r.store.Store(base.ID, obj)
 
-	if err := r.insertIndexes(obj); err != nil {
+	if err := r.insertIndexes(ctx, obj); err != nil {
 		r.store.Delete(base.ID) // Rollback main store
 		return uuid.Nil, err
 	}
@@ -94,7 +94,7 @@ func (r *RepoImpl[T]) Update(ctx context.Context, obj T) error {
 	oldObj := existingObj
 
 	// Attempt to update all indexes. Rollback is handled inside the helper.
-	if err := r.insertIndexes(obj); err != nil {
+	if err := r.insertIndexes(ctx, obj); err != nil {
 		r.store.Store(base.ID, oldObj) // Rollback main store
 		return err
 	}
@@ -136,7 +136,7 @@ func (r *RepoImpl[T]) Delete(ctx context.Context, id uuid.UUID) error {
 
 	r.mu.RLock()
 	for _, idx := range r.indexes {
-		idx.Delete(obj)
+		idx.Delete(ctx, obj)
 	}
 	r.mu.RUnlock()
 
@@ -158,18 +158,18 @@ func (r *RepoImpl[T]) WithStore(fn func(store *sync.Map)) {
 }
 
 // Index management
-func (r *RepoImpl[T]) AddIndex(name string, idx Indexer[T]) {
+func (r *RepoImpl[T]) AddIndex(ctx context.Context, name string, idx Indexer[T]) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.indexes[name] = idx
 	// Build index from existing data
 	r.store.Range(func(_, value any) bool {
-		idx.Insert(value.(T))
+		idx.Insert(ctx, value.(T))
 		return true
 	})
 }
 
-func (r *RepoImpl[T]) GetIndex(name string) (Indexer[T], bool) {
+func (r *RepoImpl[T]) GetIndex(ctx context.Context, name string) (Indexer[T], bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	idx, ok := r.indexes[name]
@@ -194,7 +194,7 @@ func (r *RepoImpl[T]) CompareAndSwap(ctx context.Context, key uuid.UUID, old T, 
 
 	// The swap in the main store succeeded. Now, update the indexes.
 	// We'll use the same pattern as in the `Create` and `Update` methods.
-	if err := r.updateIndexesForCas(old, new); err != nil {
+	if err := r.updateIndexesForCas(ctx, old, new); err != nil {
 		// Rollback the main store change.
 		r.store.Store(key, old)
 		return false, err
@@ -203,7 +203,7 @@ func (r *RepoImpl[T]) CompareAndSwap(ctx context.Context, key uuid.UUID, old T, 
 	r.notify("cas", new)
 	return true, nil
 }
-func (r *RepoImpl[T]) updateIndexesForCas(old T, new T) error {
+func (r *RepoImpl[T]) updateIndexesForCas(ctx context.Context, old T, new T) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -215,18 +215,18 @@ func (r *RepoImpl[T]) updateIndexesForCas(old T, new T) error {
 		// For a non-unique index, Delete removes a specific item from a collection.
 		// For a unique index, Insert handles the replacement.
 
-		idx.Delete(old) // Delete the old object from the index.
+		idx.Delete(ctx, old) // Delete the old object from the index.
 
-		if err := idx.Insert(new); err != nil {
+		if err := idx.Insert(ctx, new); err != nil {
 			// Rollback: Re-insert the old object into indexes that were already updated
 			// or where the Delete was successful.
 			for _, rollbackIdx := range updatedIndexes {
-				rollbackIdx.Insert(old)
+				rollbackIdx.Insert(ctx, old)
 			}
 
 			// We need to re-insert the `old` object into the index where the `new`
 			// object failed to insert.
-			idx.Insert(old)
+			idx.Insert(ctx, old)
 
 			return fmt.Errorf("failed to update index %s during CAS: %w", name, err)
 		}

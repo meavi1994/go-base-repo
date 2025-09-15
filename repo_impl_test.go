@@ -32,8 +32,8 @@ func UserEmail(u *User) string {
 func TestNewRepo(t *testing.T) {
 	ctx := context.Background()
 	userRepo := NewRepo[*User]()
-	userRepo.AddIndex("by_name", NewIndex[string, *User](UserName, cmp.Less[string]))
-	userRepo.AddIndex("by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
+	userRepo.AddIndex(ctx, "by_name", NewIndex[string, *User](UserName, cmp.Less[string]))
+	userRepo.AddIndex(ctx, "by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
 	userRepo.Create(ctx, &User{
 		Name:  "john",
 		Email: "john@abc.com",
@@ -46,7 +46,7 @@ func TestNewRepo(t *testing.T) {
 		Name:  "doe",
 		Email: "on@abc.com",
 	})
-	print(userRepo)
+	print(ctx, userRepo)
 
 }
 func logger(event Event[*User]) {
@@ -65,8 +65,8 @@ func TestEvents(t *testing.T) {
 	ch := make(chan Event[*User])
 	userRepo.AddSubscriber(ch)
 	go consumer(ch)
-	userRepo.AddIndex("by_name", NewIndex[string, *User](UserName, cmp.Less[string]))
-	userRepo.AddIndex("by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
+	userRepo.AddIndex(ctx, "by_name", NewIndex[string, *User](UserName, cmp.Less[string]))
+	userRepo.AddIndex(ctx, "by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
 	userRepo.Create(ctx, &User{
 		Name:  "john",
 		Email: "john@abc.com",
@@ -80,15 +80,15 @@ func TestEvents(t *testing.T) {
 		Email: "on@abc.com",
 	})
 
-	print(userRepo)
+	print(ctx, userRepo)
 
 }
 
 func TestUniqueNewRepo(t *testing.T) {
 	ctx := context.Background()
 	userRepo := NewRepo[*User]()
-	userRepo.AddIndex("by_name", NewUniqueIndex[string, *User](UserName, cmp.Less[string]))
-	userRepo.AddIndex("by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
+	userRepo.AddIndex(ctx, "by_name", NewUniqueIndex[string, *User](UserName, cmp.Less[string]))
+	userRepo.AddIndex(ctx, "by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
 	_, err := userRepo.Create(ctx, &User{
 		Name:  "john",
 		Email: "john@abc.com",
@@ -113,9 +113,9 @@ func TestUniqueNewRepo(t *testing.T) {
 	fmt.Println(err)
 }
 
-func print(userRepo Repo[*User]) {
-	byName, _ := userRepo.GetIndex("by_name")
-	byEmail, _ := userRepo.GetIndex("by_email")
+func print(ctx context.Context, userRepo Repo[*User]) {
+	byName, _ := userRepo.GetIndex(ctx, "by_name")
+	byEmail, _ := userRepo.GetIndex(ctx, "by_email")
 	fmt.Println("repo ->", userRepo)
 	fmt.Println("name ->", byName)
 	fmt.Println("email ->", byEmail)

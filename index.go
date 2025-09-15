@@ -2,6 +2,7 @@
 package base_repo
 
 import (
+	"context"
 	"sync"
 )
 
@@ -14,21 +15,21 @@ type item[K comparable, T Entity] struct {
 }
 
 type Indexer[T Entity] interface {
-	Insert(obj T) error
-	Delete(obj T)
-	Ascend(fn func(T) bool)
-	Descend(fn func(T) bool)
+	Insert(ctx context.Context, obj T) error
+	Delete(ctx context.Context, obj T)
+	Ascend(ctx context.Context, fn func(T) bool)
+	Descend(ctx context.Context, fn func(T) bool)
 }
 
 // Index contract for ordered indexes over entities.
 type Index[K comparable, T Entity] interface {
-	Insert(obj T) error
-	Delete(obj T)
-	Find(key K) []T
-	Ascend(fn func(T) bool)
-	Descend(fn func(T) bool)
-	AscendRange(lower, upper K, fn func(T) bool)
-	DescendRange(lower, upper K, fn func(T) bool)
-	AscendGreaterThanOrEqual(key K, fn func(T) bool)
-	DescendLessThanOrEqual(key K, fn func(T) bool)
+	Insert(ctx context.Context, obj T) error
+	Delete(ctx context.Context, obj T)
+	Find(ctx context.Context, key K) []T
+	Ascend(ctx context.Context, fn func(T) bool)
+	Descend(ctx context.Context, fn func(T) bool)
+	AscendRange(ctx context.Context, lower, upper K, fn func(T) bool)
+	DescendRange(ctx context.Context, lower, upper K, fn func(T) bool)
+	AscendGreaterThanOrEqual(ctx context.Context, key K, fn func(T) bool)
+	DescendLessThanOrEqual(ctx context.Context, key K, fn func(T) bool)
 }

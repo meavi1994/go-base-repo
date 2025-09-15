@@ -41,8 +41,8 @@ type Repo[T Entity] interface {
 	WithStore(fn func(store *sync.Map))
 
 	// Index support
-	AddIndex(name string, idx Indexer[T])
-	GetIndex(name string) (Indexer[T], bool)
+	AddIndex(ctx context.Context, name string, idx Indexer[T])
+	GetIndex(ctx context.Context, name string) (Indexer[T], bool)
 
 	// Subscribers
 	AddSubscriber(chan Event[T])

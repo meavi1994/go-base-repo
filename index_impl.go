@@ -3,6 +3,7 @@
 package base_repo
 
 import (
+	"context"
 	"fmt"
 	"github.com/google/btree"
 	"github.com/google/uuid"
@@ -46,7 +47,7 @@ func NewUniqueIndex[K comparable, T Entity](keyFunc func(T) K, lessFunc func(a, 
 }
 
 // Insert or replace entity in index.
-func (idx *BTreeIndex[K, T]) Insert(obj T) error {
+func (idx *BTreeIndex[K, T]) Insert(ctx context.Context, obj T) error {
 	if idx.unique {
 		return idx.insertUnique(obj)
 	}
@@ -109,7 +110,7 @@ func (idx *BTreeIndex[K, T]) insertUnique(obj T) error {
 }
 
 // Delete entity from index.
-func (idx *BTreeIndex[K, T]) Delete(obj T) {
+func (idx *BTreeIndex[K, T]) Delete(ctx context.Context, obj T) {
 	key := idx.keyFunc(obj)
 
 	existingItem, found := idx.tree.Get(item[K, T]{key: key})
@@ -130,7 +131,7 @@ func (idx *BTreeIndex[K, T]) Delete(obj T) {
 }
 
 // Find returns all entities for a given key.
-func (idx *BTreeIndex[K, T]) Find(key K) []T {
+func (idx *BTreeIndex[K, T]) Find(ctx context.Context, key K) []T {
 	it, found := idx.tree.Get(item[K, T]{key: key})
 	if !found {
 		return nil
@@ -148,6 +149,7 @@ func (idx *BTreeIndex[K, T]) Find(key K) []T {
 // forRange is a generic iterator helper to avoid code duplication.
 // It accepts a btree iteration function and a user-provided callback.
 func (idx *BTreeIndex[K, T]) forRange(
+	ctx context.Context,
 	btreeIterFn func(fn func(i item[K, T]) bool),
 	userFn func(T) bool,
 ) {
@@ -165,15 +167,15 @@ func (idx *BTreeIndex[K, T]) forRange(
 }
 
 // Ascend iterates in ascending order.
-func (idx *BTreeIndex[K, T]) Ascend(fn func(T) bool) {
-	idx.forRange(func(btreeFn func(i item[K, T]) bool) {
+func (idx *BTreeIndex[K, T]) Ascend(ctx context.Context, fn func(T) bool) {
+	idx.forRange(ctx, func(btreeFn func(i item[K, T]) bool) {
 		idx.tree.Ascend(btreeFn)
 	}, fn)
 }
 
 // Descend iterates in descending order.
-func (idx *BTreeIndex[K, T]) Descend(fn func(T) bool) {
-	idx.forRange(
+func (idx *BTreeIndex[K, T]) Descend(ctx context.Context, fn func(T) bool) {
+	idx.forRange(ctx,
 		func(btreeFn func(i item[K, T]) bool) {
 			idx.tree.Descend(btreeFn)
 		},
@@ -181,8 +183,8 @@ func (idx *BTreeIndex[K, T]) Descend(fn func(T) bool) {
 }
 
 // AscendRange iterates between [lower, upper].
-func (idx *BTreeIndex[K, T]) AscendRange(lower, upper K, fn func(T) bool) {
-	idx.forRange(
+func (idx *BTreeIndex[K, T]) AscendRange(ctx context.Context, lower, upper K, fn func(T) bool) {
+	idx.forRange(ctx,
 		func(btreeFn func(i item[K, T]) bool) {
 			idx.tree.AscendRange(item[K, T]{key: lower}, item[K, T]{key: upper}, btreeFn)
 		},
@@ -191,8 +193,8 @@ func (idx *BTreeIndex[K, T]) AscendRange(lower, upper K, fn func(T) bool) {
 }
 
 // DescendRange iterates between [upper, lower] in reverse.
-func (idx *BTreeIndex[K, T]) DescendRange(lower, upper K, fn func(T) bool) {
-	idx.forRange(
+func (idx *BTreeIndex[K, T]) DescendRange(ctx context.Context, lower, upper K, fn func(T) bool) {
+	idx.forRange(ctx,
 		func(btreeFn func(i item[K, T]) bool) {
 			idx.tree.DescendRange(item[K, T]{key: upper}, item[K, T]{key: lower}, btreeFn)
 		},
@@ -201,8 +203,8 @@ func (idx *BTreeIndex[K, T]) DescendRange(lower, upper K, fn func(T) bool) {
 }
 
 // AscendGreaterThanOrEqual iterates from key to the end in ascending order.
-func (idx *BTreeIndex[K, T]) AscendGreaterThanOrEqual(key K, fn func(T) bool) {
-	idx.forRange(
+func (idx *BTreeIndex[K, T]) AscendGreaterThanOrEqual(ctx context.Context, key K, fn func(T) bool) {
+	idx.forRange(ctx,
 		func(btreeFn func(i item[K, T]) bool) {
 			idx.tree.AscendGreaterOrEqual(item[K, T]{key: key}, btreeFn)
 		},
@@ -211,8 +213,8 @@ func (idx *BTreeIndex[K, T]) AscendGreaterThanOrEqual(key K, fn func(T) bool) {
 }
 
 // DescendLessThanOrEqual iterates from key to the beginning in descending order.
-func (idx *BTreeIndex[K, T]) DescendLessThanOrEqual(key K, fn func(T) bool) {
-	idx.forRange(
+func (idx *BTreeIndex[K, T]) DescendLessThanOrEqual(ctx context.Context, key K, fn func(T) bool) {
+	idx.forRange(ctx,
 		func(btreeFn func(i item[K, T]) bool) {
 			idx.tree.DescendLessOrEqual(item[K, T]{key: key}, btreeFn)
 		},
@@ -225,7 +227,7 @@ func (idx *BTreeIndex[K, T]) String() string {
 	sb.WriteString("[")
 	first := true
 
-	idx.Ascend(func(obj T) bool {
+	idx.Ascend(context.TODO(), func(obj T) bool {
 		if !first {
 			sb.WriteString(", ")
 		}
