@@ -125,6 +125,20 @@ func (r *RepoImpl[T]) Get(ctx context.Context, id uuid.UUID) (T, error) {
 	return v.(T), nil
 }
 
+func (r *RepoImpl[T]) GetAllByIds(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]T, error) {
+	result := make(map[uuid.UUID]T, len(ids))
+	for _, id := range ids {
+		if v, ok := r.store.Load(id); ok {
+			result[id] = v.(T)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, ErrNotFound
+	}
+	return result, nil
+}
+
 func (r *RepoImpl[T]) Delete(ctx context.Context, id uuid.UUID) error {
 	v, ok := r.store.Load(id)
 	if !ok {

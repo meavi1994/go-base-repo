@@ -29,6 +29,7 @@ type Entity interface {
 type Repo[T Entity] interface {
 	Create(ctx context.Context, obj T) (uuid.UUID, error)
 	Get(ctx context.Context, id uuid.UUID) (T, error)
+	GetAllByIds(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]T, error)
 	Update(ctx context.Context, obj T) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	GetAll(ctx context.Context) []T
