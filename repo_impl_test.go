@@ -1,6 +1,7 @@
 package base_repo
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log"
@@ -31,8 +32,8 @@ func UserEmail(u *User) string {
 func TestNewRepo(t *testing.T) {
 	ctx := context.Background()
 	userRepo := NewRepo[*User]()
-	userRepo.AddIndex("by_name", NewIndex[*User](UserName))
-	userRepo.AddIndex("by_email", NewIndex[*User](UserEmail))
+	userRepo.AddIndex("by_name", NewIndex[string, *User](UserName, cmp.Less[string]))
+	userRepo.AddIndex("by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
 	userRepo.Create(ctx, &User{
 		Name:  "john",
 		Email: "john@abc.com",
@@ -56,8 +57,8 @@ func TestEvents(t *testing.T) {
 	ctx := context.Background()
 	userRepo := NewRepo[*User]()
 	userRepo.AddSubscriber(logger)
-	userRepo.AddIndex("by_name", NewIndex[*User](UserName))
-	userRepo.AddIndex("by_email", NewIndex[*User](UserEmail))
+	userRepo.AddIndex("by_name", NewIndex[string, *User](UserName, cmp.Less[string]))
+	userRepo.AddIndex("by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
 	userRepo.Create(ctx, &User{
 		Name:  "john",
 		Email: "john@abc.com",
@@ -79,8 +80,8 @@ func TestEvents(t *testing.T) {
 func TestUniqueNewRepo(t *testing.T) {
 	ctx := context.Background()
 	userRepo := NewRepo[*User]()
-	userRepo.AddIndex("by_name", NewUniqueIndex[*User](UserName))
-	userRepo.AddIndex("by_email", NewIndex[*User](UserEmail))
+	userRepo.AddIndex("by_name", NewUniqueIndex[string, *User](UserName, cmp.Less[string]))
+	userRepo.AddIndex("by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
 	_, err := userRepo.Create(ctx, &User{
 		Name:  "john",
 		Email: "john@abc.com",

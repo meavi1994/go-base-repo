@@ -14,7 +14,7 @@ import (
 // RepoImpl is a generic, thread-safe, in-memory repository.
 type RepoImpl[T Entity] struct {
 	store       sync.Map
-	indexes     map[string]Index[T]
+	indexes     map[string]Indexer[T]
 	subscribers []func(event string, obj T)
 	mu          sync.RWMutex
 
@@ -27,7 +27,7 @@ type RepoImpl[T Entity] struct {
 
 func NewRepo[T Entity]() *RepoImpl[T] {
 	return &RepoImpl[T]{
-		indexes: make(map[string]Index[T]),
+		indexes: make(map[string]Indexer[T]),
 	}
 }
 
@@ -53,7 +53,7 @@ func (r *RepoImpl[T]) notify(event string, obj T) {
 	}
 }
 
-func (r *RepoImpl[T]) rollback(updatedIndexes map[string]Index[T], obj T) {
+func (r *RepoImpl[T]) rollback(updatedIndexes map[string]Indexer[T], obj T) {
 	for _, rollbackIdx := range updatedIndexes {
 		rollbackIdx.Delete(obj)
 	}
@@ -63,7 +63,7 @@ func (r *RepoImpl[T]) insertIndexes(obj T) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	updatedIndexes := make(map[string]Index[T])
+	updatedIndexes := make(map[string]Indexer[T])
 
 	for name, idx := range r.indexes {
 		if err := idx.Insert(obj); err != nil {
@@ -157,7 +157,7 @@ func (r *RepoImpl[T]) WithStore(fn func(store *sync.Map)) {
 }
 
 // Index management
-func (r *RepoImpl[T]) AddIndex(name string, idx Index[T]) {
+func (r *RepoImpl[T]) AddIndex(name string, idx Indexer[T]) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.indexes[name] = idx
@@ -168,7 +168,7 @@ func (r *RepoImpl[T]) AddIndex(name string, idx Index[T]) {
 	})
 }
 
-func (r *RepoImpl[T]) GetIndex(name string) (Index[T], bool) {
+func (r *RepoImpl[T]) GetIndex(name string) (Indexer[T], bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	idx, ok := r.indexes[name]
@@ -211,7 +211,7 @@ func (r *RepoImpl[T]) updateIndexesForCas(old T, new T) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	updatedIndexes := make(map[string]Index[T])
+	updatedIndexes := make(map[string]Indexer[T])
 
 	for name, idx := range r.indexes {
 		// A potential issue: if the index key for 'old' is the same as for 'new',

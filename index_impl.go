@@ -10,38 +10,43 @@ import (
 	"sync"
 )
 
-// BTreeIndex implements Index[T] using a B-Tree.
-// It stores a collection of entities for each key to handle duplicates.
-type BTreeIndex[T Entity] struct {
-	tree    *btree.BTreeG[item[T]]
-	keyFunc func(T) string
+// BTreeIndex now has a type parameter for the key.
+// K represents the key type, T is the entity type.
+type BTreeIndex[K comparable, T Entity] struct {
+	tree    *btree.BTreeG[item[K, T]]
+	keyFunc func(T) K
 	unique  bool
 }
 
-// NewIndex creates a new BTree-based Index with a given key extractor.
-// It uses btree.NewG and a custom comparison function.
-// The degree is fixed at 2 for this implementation.
-func newIndex[T Entity](keyFunc func(T) string, unique bool) *BTreeIndex[T] {
-	lessFunc := func(a, b item[T]) bool {
-		return a.key < b.key
+// NewIndex creates a new BTree-based Index with a generic key extractor.
+// It requires a lessFunc to compare the keys.
+func newIndex[K comparable, T Entity](
+	keyFunc func(T) K,
+	lessFunc func(a, b K) bool,
+	unique bool,
+) *BTreeIndex[K, T] {
+	// The lessFunc for the btree now uses the user-provided lessFunc for keys.
+	btreeLessFunc := func(a, b item[K, T]) bool {
+		return lessFunc(a.key, b.key)
 	}
-	return &BTreeIndex[T]{
-		tree:    btree.NewG(2, lessFunc),
+	return &BTreeIndex[K, T]{
+		tree:    btree.NewG(2, btreeLessFunc),
 		keyFunc: keyFunc,
 		unique:  unique,
 	}
 }
 
-func NewIndex[T Entity](keyFunc func(T) string) *BTreeIndex[T] {
-	return newIndex(keyFunc, false)
+// A generic version of the constructor, requiring the lessFunc.
+func NewIndex[K comparable, T Entity](keyFunc func(T) K, lessFunc func(a, b K) bool) *BTreeIndex[K, T] {
+	return newIndex(keyFunc, lessFunc, false)
 }
 
-func NewUniqueIndex[T Entity](keyFunc func(T) string) *BTreeIndex[T] {
-	return newIndex(keyFunc, true)
+func NewUniqueIndex[K comparable, T Entity](keyFunc func(T) K, lessFunc func(a, b K) bool) *BTreeIndex[K, T] {
+	return newIndex(keyFunc, lessFunc, true)
 }
 
 // Insert or replace entity in index.
-func (idx *BTreeIndex[T]) Insert(obj T) error {
+func (idx *BTreeIndex[K, T]) Insert(obj T) error {
 	if idx.unique {
 		return idx.insertUnique(obj)
 	}
@@ -49,11 +54,11 @@ func (idx *BTreeIndex[T]) Insert(obj T) error {
 	return nil
 }
 
-func (idx *BTreeIndex[T]) insertNonUnique(obj T) {
+func (idx *BTreeIndex[K, T]) insertNonUnique(obj T) {
 	key := idx.keyFunc(obj)
 
 	// Get the existing item and the 'found' boolean
-	it, found := idx.tree.Get(item[T]{key: key})
+	it, found := idx.tree.Get(item[K, T]{key: key})
 
 	if found {
 		// Key exists, add to the existing collection
@@ -63,15 +68,15 @@ func (idx *BTreeIndex[T]) insertNonUnique(obj T) {
 		// Key does not exist, create a new collection
 		newCollection := &sync.Map{}
 		newCollection.Store(obj.GetBase().ID, obj)
-		idx.tree.ReplaceOrInsert(item[T]{key: key, value: newCollection})
+		idx.tree.ReplaceOrInsert(item[K, T]{key: key, value: newCollection})
 	}
 }
 
-func (idx *BTreeIndex[T]) insertUnique(obj T) error {
+func (idx *BTreeIndex[K, T]) insertUnique(obj T) error {
 	key := idx.keyFunc(obj)
 
 	// Get the existing item and the 'found' boolean
-	it, found := idx.tree.Get(item[T]{key: key})
+	it, found := idx.tree.Get(item[K, T]{key: key})
 
 	if found {
 		// Key exists, now check if the IDs are the same
@@ -98,16 +103,16 @@ func (idx *BTreeIndex[T]) insertUnique(obj T) error {
 	newMap.Store(obj.GetBase().ID, obj)
 
 	// Use ReplaceOrInsert to handle both new items and updates
-	idx.tree.ReplaceOrInsert(item[T]{key: key, value: newMap})
+	idx.tree.ReplaceOrInsert(item[K, T]{key: key, value: newMap})
 
 	return nil
 }
 
 // Delete entity from index.
-func (idx *BTreeIndex[T]) Delete(obj T) {
+func (idx *BTreeIndex[K, T]) Delete(obj T) {
 	key := idx.keyFunc(obj)
 
-	existingItem, found := idx.tree.Get(item[T]{key: key})
+	existingItem, found := idx.tree.Get(item[K, T]{key: key})
 	if found {
 		collection := existingItem.value
 		collection.Delete(obj.GetBase().ID)
@@ -125,8 +130,8 @@ func (idx *BTreeIndex[T]) Delete(obj T) {
 }
 
 // Find returns all entities for a given key.
-func (idx *BTreeIndex[T]) Find(key string) []T {
-	it, found := idx.tree.Get(item[T]{key: key})
+func (idx *BTreeIndex[K, T]) Find(key K) []T {
+	it, found := idx.tree.Get(item[K, T]{key: key})
 	if !found {
 		return nil
 	}
@@ -142,11 +147,11 @@ func (idx *BTreeIndex[T]) Find(key string) []T {
 
 // forRange is a generic iterator helper to avoid code duplication.
 // It accepts a btree iteration function and a user-provided callback.
-func (idx *BTreeIndex[T]) forRange(
-	btreeIterFn func(fn func(i item[T]) bool),
+func (idx *BTreeIndex[K, T]) forRange(
+	btreeIterFn func(fn func(i item[K, T]) bool),
 	userFn func(T) bool,
 ) {
-	btreeIterFn(func(i item[T]) bool {
+	btreeIterFn(func(i item[K, T]) bool {
 		var continueIteration = true
 		i.value.Range(func(_, value any) bool {
 			if !userFn(value.(T)) {
@@ -160,62 +165,62 @@ func (idx *BTreeIndex[T]) forRange(
 }
 
 // Ascend iterates in ascending order.
-func (idx *BTreeIndex[T]) Ascend(fn func(T) bool) {
-	idx.forRange(func(btreeFn func(i item[T]) bool) {
+func (idx *BTreeIndex[K, T]) Ascend(fn func(T) bool) {
+	idx.forRange(func(btreeFn func(i item[K, T]) bool) {
 		idx.tree.Ascend(btreeFn)
 	}, fn)
 }
 
 // Descend iterates in descending order.
-func (idx *BTreeIndex[T]) Descend(fn func(T) bool) {
+func (idx *BTreeIndex[K, T]) Descend(fn func(T) bool) {
 	idx.forRange(
-		func(btreeFn func(i item[T]) bool) {
+		func(btreeFn func(i item[K, T]) bool) {
 			idx.tree.Descend(btreeFn)
 		},
 		fn)
 }
 
 // AscendRange iterates between [lower, upper].
-func (idx *BTreeIndex[T]) AscendRange(lower, upper string, fn func(T) bool) {
+func (idx *BTreeIndex[K, T]) AscendRange(lower, upper K, fn func(T) bool) {
 	idx.forRange(
-		func(btreeFn func(i item[T]) bool) {
-			idx.tree.AscendRange(item[T]{key: lower}, item[T]{key: upper}, btreeFn)
+		func(btreeFn func(i item[K, T]) bool) {
+			idx.tree.AscendRange(item[K, T]{key: lower}, item[K, T]{key: upper}, btreeFn)
 		},
 		fn,
 	)
 }
 
 // DescendRange iterates between [upper, lower] in reverse.
-func (idx *BTreeIndex[T]) DescendRange(lower, upper string, fn func(T) bool) {
+func (idx *BTreeIndex[K, T]) DescendRange(lower, upper K, fn func(T) bool) {
 	idx.forRange(
-		func(btreeFn func(i item[T]) bool) {
-			idx.tree.DescendRange(item[T]{key: upper}, item[T]{key: lower}, btreeFn)
+		func(btreeFn func(i item[K, T]) bool) {
+			idx.tree.DescendRange(item[K, T]{key: upper}, item[K, T]{key: lower}, btreeFn)
 		},
 		fn,
 	)
 }
 
 // AscendGreaterThanOrEqual iterates from key to the end in ascending order.
-func (idx *BTreeIndex[T]) AscendGreaterThanOrEqual(key string, fn func(T) bool) {
+func (idx *BTreeIndex[K, T]) AscendGreaterThanOrEqual(key K, fn func(T) bool) {
 	idx.forRange(
-		func(btreeFn func(i item[T]) bool) {
-			idx.tree.AscendGreaterOrEqual(item[T]{key: key}, btreeFn)
+		func(btreeFn func(i item[K, T]) bool) {
+			idx.tree.AscendGreaterOrEqual(item[K, T]{key: key}, btreeFn)
 		},
 		fn,
 	)
 }
 
 // DescendLessThanOrEqual iterates from key to the beginning in descending order.
-func (idx *BTreeIndex[T]) DescendLessThanOrEqual(key string, fn func(T) bool) {
+func (idx *BTreeIndex[K, T]) DescendLessThanOrEqual(key K, fn func(T) bool) {
 	idx.forRange(
-		func(btreeFn func(i item[T]) bool) {
-			idx.tree.DescendLessOrEqual(item[T]{key: key}, btreeFn)
+		func(btreeFn func(i item[K, T]) bool) {
+			idx.tree.DescendLessOrEqual(item[K, T]{key: key}, btreeFn)
 		},
 		fn,
 	)
 }
 
-func (idx *BTreeIndex[T]) String() string {
+func (idx *BTreeIndex[K, T]) String() string {
 	var sb strings.Builder
 	sb.WriteString("[")
 	first := true
