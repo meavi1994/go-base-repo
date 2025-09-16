@@ -21,12 +21,15 @@ type RepoImpl[T Entity] struct {
 	mu            sync.RWMutex
 	subscribersMu sync.RWMutex
 	logEnabled    bool
+	logger        *slog.Logger
 }
 
+// NewRepo creates a new repository with logging disabled.
 func NewRepo[T Entity]() *RepoImpl[T] {
 	return &RepoImpl[T]{
 		indexes:    make(map[string]Indexer[T]),
 		logEnabled: false,
+		logger:     slog.Default(),
 	}
 }
 
@@ -35,19 +38,21 @@ func NewRepoWithLogs[T Entity]() *RepoImpl[T] {
 	return &RepoImpl[T]{
 		indexes:    make(map[string]Indexer[T]),
 		logEnabled: true,
+		logger:     slog.Default(),
 	}
 }
 
-// The following methods have been updated with slog.Default().
-// We'll use a helper method `logInfo` to simplify logging calls.
-func (r *RepoImpl[T]) logInfo(ctx context.Context, msg string, args ...any) {
-	if r.logEnabled {
-		slog.Default().InfoContext(ctx, msg, args...)
-	}
+// entityAttrs returns a consistent set of slog.Attrs for an entity.
+func (r *RepoImpl[T]) entityAttrs(obj T) slog.Attr {
+	return slog.Group("entity", "id", obj.GetBase().ID, "name", obj.EntityName())
 }
+
+// The following methods have been updated with structured logging.
 
 func (r *RepoImpl[T]) notify(eventType string, obj T) {
-	r.logInfo(context.Background(), "Notifying subscribers", "eventType", eventType, "id", obj.GetBase().ID)
+	if r.logEnabled {
+		r.logger.Info("Notifying subscribers", "eventType", eventType, r.entityAttrs(obj))
+	}
 	r.subscribersMu.RLock()
 	defer r.subscribersMu.RUnlock()
 
@@ -58,10 +63,17 @@ func (r *RepoImpl[T]) notify(eventType string, obj T) {
 }
 
 func (r *RepoImpl[T]) rollback(ctx context.Context, updatedIndexes map[string]Indexer[T], obj T) {
-	r.logInfo(ctx, "Starting index rollback", "id", obj.GetBase().ID)
-	for name, rollbackIdx := range updatedIndexes {
-		rollbackIdx.Delete(ctx, obj)
-		r.logInfo(ctx, "Rolled back index", "name", name, "id", obj.GetBase().ID)
+	if r.logEnabled {
+		rollbackLogger := r.logger.With("op", "rollback", r.entityAttrs(obj))
+		rollbackLogger.InfoContext(ctx, "Starting index rollback")
+		for name, rollbackIdx := range updatedIndexes {
+			rollbackIdx.Delete(ctx, obj)
+			rollbackLogger.InfoContext(ctx, "Rolled back index", "indexName", name)
+		}
+	} else {
+		for _, rollbackIdx := range updatedIndexes {
+			rollbackIdx.Delete(ctx, obj)
+		}
 	}
 }
 
@@ -69,19 +81,27 @@ func (r *RepoImpl[T]) insertIndexes(ctx context.Context, obj T) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	r.logInfo(ctx, "Attempting to insert into indexes", "id", obj.GetBase().ID, "numIndexes", len(r.indexes))
-	updatedIndexes := make(map[string]Indexer[T])
+	if r.logEnabled {
+		r.logger.InfoContext(ctx, "Attempting to insert into indexes", r.entityAttrs(obj), "numIndexes", len(r.indexes))
+	}
 
+	updatedIndexes := make(map[string]Indexer[T])
 	for name, idx := range r.indexes {
 		if err := idx.Insert(ctx, obj); err != nil {
-			r.logInfo(ctx, "Failed to insert into index, beginning rollback", "name", name, "id", obj.GetBase().ID, "error", err)
+			if r.logEnabled {
+				r.logger.ErrorContext(ctx, "Failed to insert into index, beginning rollback", "indexName", name, r.entityAttrs(obj), "error", err)
+			}
 			r.rollback(ctx, updatedIndexes, obj)
 			return fmt.Errorf("failed to insert into index %s: %w", name, err)
 		}
 		updatedIndexes[name] = idx
-		r.logInfo(ctx, "Successfully inserted into index", "name", name, "id", obj.GetBase().ID)
+		if r.logEnabled {
+			r.logger.InfoContext(ctx, "Successfully inserted into index", "indexName", name, r.entityAttrs(obj))
+		}
 	}
-	r.logInfo(ctx, "Successfully inserted into all indexes", "id", obj.GetBase().ID)
+	if r.logEnabled {
+		r.logger.InfoContext(ctx, "Successfully inserted into all indexes", r.entityAttrs(obj))
+	}
 	return nil
 }
 
@@ -90,202 +110,284 @@ func (r *RepoImpl[T]) Create(ctx context.Context, obj T) (uuid.UUID, error) {
 	base.ID = uuid.New()
 	base.CreatedAt = time.Now()
 	base.UpdatedAt = base.CreatedAt
-	r.logInfo(ctx, "Creating new entity", "id", base.ID)
+
+	opLogger := r.logger.With("op", "create", r.entityAttrs(obj))
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Creating new entity")
+	}
 
 	r.store.Store(base.ID, obj)
-
 	if err := r.insertIndexes(ctx, obj); err != nil {
 		r.store.Delete(base.ID) // Rollback main store
-		r.logInfo(ctx, "Create failed, main store rolled back", "id", base.ID, "error", err)
+		if r.logEnabled {
+			opLogger.ErrorContext(ctx, "Create failed, main store rolled back", "error", err)
+		}
 		return uuid.Nil, err
 	}
 
 	r.notify("create", obj)
-	r.logInfo(ctx, "Entity created successfully", "id", base.ID)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Entity created successfully")
+	}
 	return base.ID, nil
 }
 
 func (r *RepoImpl[T]) Update(ctx context.Context, obj T) error {
 	base := obj.GetBase()
-	r.logInfo(ctx, "Updating entity", "id", base.ID)
+	opLogger := r.logger.With("op", "update", "id", base.ID)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Updating entity")
+	}
 	existingObj, err := r.Get(ctx, base.ID)
 	if err != nil {
-		r.logInfo(ctx, "Update failed, entity not found", "id", base.ID, "error", err)
+		if r.logEnabled {
+			opLogger.ErrorContext(ctx, "Update failed, entity not found", "error", err)
+		}
 		return err
 	}
 
 	r.store.Store(base.ID, obj)
 	base.UpdatedAt = time.Now()
-
 	oldObj := existingObj
 
 	if err := r.insertIndexes(ctx, obj); err != nil {
 		r.store.Store(base.ID, oldObj) // Rollback main store
-		r.logInfo(ctx, "Update failed, main store rolled back", "id", base.ID, "error", err)
+		if r.logEnabled {
+			opLogger.ErrorContext(ctx, "Update failed, main store rolled back", "error", err)
+		}
 		return err
 	}
 
 	r.notify("update", obj)
-	r.logInfo(ctx, "Entity updated successfully", "id", base.ID)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Entity updated successfully", "updatedName", obj.EntityName())
+	}
 	return nil
 }
 
 func (r *RepoImpl[T]) Get(ctx context.Context, id uuid.UUID) (T, error) {
-	r.logInfo(ctx, "Attempting to get entity", "id", id)
+	opLogger := r.logger.With("op", "get", "id", id)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Attempting to get entity")
+	}
 	v, ok := r.store.Load(id)
 	if !ok {
 		var zero T
-		r.logInfo(ctx, "Get failed, entity not found", "id", id)
+		if r.logEnabled {
+			opLogger.WarnContext(ctx, "Get failed, entity not found")
+		}
 		return zero, ErrNotFound
 	}
-	r.logInfo(ctx, "Successfully retrieved entity", "id", id)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Successfully retrieved entity", "name", v.(T).EntityName())
+	}
 	return v.(T), nil
 }
 
 func (r *RepoImpl[T]) GetAllByIds(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]T, error) {
-	r.logInfo(ctx, "Getting multiple entities by IDs", "count", len(ids))
+	opLogger := r.logger.With("op", "getAllByIds", "count", len(ids))
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Getting multiple entities by IDs")
+	}
 	result := make(map[uuid.UUID]T, len(ids))
 	for _, id := range ids {
 		if v, ok := r.store.Load(id); ok {
 			result[id] = v.(T)
 		}
 	}
-
 	if len(result) == 0 {
-		r.logInfo(ctx, "GetAllByIds failed, no entities found")
+		if r.logEnabled {
+			opLogger.WarnContext(ctx, "GetAllByIds failed, no entities found")
+		}
 		return nil, ErrNotFound
 	}
-	r.logInfo(ctx, "Successfully retrieved entities", "count", len(result))
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Successfully retrieved entities", "retrievedCount", len(result))
+	}
 	return result, nil
 }
 
 func (r *RepoImpl[T]) Delete(ctx context.Context, id uuid.UUID) error {
-	r.logInfo(ctx, "Attempting to delete entity", "id", id)
+	opLogger := r.logger.With("op", "delete", "id", id)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Attempting to delete entity")
+	}
 	v, ok := r.store.Load(id)
 	if !ok {
-		r.logInfo(ctx, "Delete failed, entity not found", "id", id)
+		if r.logEnabled {
+			opLogger.WarnContext(ctx, "Delete failed, entity not found")
+		}
 		return ErrNotFound
 	}
 	obj := v.(T)
 	r.store.Delete(id)
-	r.logInfo(ctx, "Deleted entity from main store", "id", id)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Deleted entity from main store", "name", obj.EntityName())
+	}
 
 	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	for name, idx := range r.indexes {
 		idx.Delete(ctx, obj)
-		r.logInfo(ctx, "Deleted entity from index", "name", name, "id", id)
+		if r.logEnabled {
+			opLogger.InfoContext(ctx, "Deleted entity from index", "indexName", name, "name", obj.EntityName())
+		}
 	}
-	r.mu.RUnlock()
 
 	r.notify("delete", obj)
-	r.logInfo(ctx, "Entity deleted successfully", "id", id)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Entity deleted successfully", "name", obj.EntityName())
+	}
 	return nil
 }
 
 func (r *RepoImpl[T]) GetAll(ctx context.Context) []T {
-	r.logInfo(ctx, "Getting all entities")
+	opLogger := r.logger.With("op", "getAll")
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Getting all entities")
+	}
 	var result []T
 	r.store.Range(func(_, value any) bool {
 		result = append(result, value.(T))
 		return true
 	})
-	r.logInfo(ctx, "Successfully retrieved all entities", "count", len(result))
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Successfully retrieved all entities", "count", len(result))
+	}
 	return result
 }
 
 func (r *RepoImpl[T]) WithStore(fn func(store *sync.Map)) {
-	r.logInfo(context.Background(), "Executing WithStore callback")
+	if r.logEnabled {
+		r.logger.Info("Executing WithStore callback")
+	}
 	fn(&r.store)
 }
 
 // Index management
 func (r *RepoImpl[T]) AddIndex(ctx context.Context, name string, idx Indexer[T]) {
-	r.logInfo(ctx, "Adding new index", "name", name)
+	opLogger := r.logger.With("op", "addIndex", "indexName", name)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Adding new index")
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.indexes[name] = idx
-	r.logInfo(ctx, "Building index from existing data", "name", name)
+
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Building index from existing data")
+	}
 	r.store.Range(func(_, value any) bool {
 		if err := idx.Insert(ctx, value.(T)); err != nil {
-			r.logInfo(ctx, "Failed to insert into index during build", "name", name, "error", err)
+			if r.logEnabled {
+				opLogger.ErrorContext(ctx, "Failed to insert into index during build", "entityName", value.(T).EntityName(), "error", err)
+			}
 			return false
 		}
 		return true
 	})
-	r.logInfo(ctx, "Index built successfully", "name", name)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Index built successfully")
+	}
 }
 
 func (r *RepoImpl[T]) GetIndex(ctx context.Context, name string) (Indexer[T], bool) {
-	r.logInfo(ctx, "Getting index by name", "name", name)
+	opLogger := r.logger.With("op", "getIndex", "indexName", name)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Getting index by name")
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	idx, ok := r.indexes[name]
 	if !ok {
-		r.logInfo(ctx, "Index not found", "name", name)
+		if r.logEnabled {
+			opLogger.WarnContext(ctx, "Index not found")
+		}
 	}
 	return idx, ok
 }
 
 // AddSubscriber registers a channel to receive events.
 func (r *RepoImpl[T]) AddSubscriber(ch chan Event[T]) {
-	r.logInfo(context.Background(), "Adding new subscriber")
+	if r.logEnabled {
+		r.logger.Info("Adding new subscriber")
+	}
 	r.subscribersMu.Lock()
 	defer r.subscribersMu.Unlock()
 	r.subscribers = append(r.subscribers, ch)
 }
 
 func (r *RepoImpl[T]) CompareAndSwap(ctx context.Context, key uuid.UUID, old T, new T) (bool, error) {
-	r.logInfo(ctx, "Attempting CompareAndSwap", "id", key)
+	opLogger := r.logger.With("op", "cas", "id", key)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Attempting CompareAndSwap", "oldName", old.EntityName(), "newName", new.EntityName())
+	}
 	swapped := r.store.CompareAndSwap(key, old, new)
 
 	if !swapped {
-		r.logInfo(ctx, "CompareAndSwap failed due to mismatch", "id", key)
+		if r.logEnabled {
+			opLogger.WarnContext(ctx, "CompareAndSwap failed due to mismatch")
+		}
 		return false, nil
 	}
-	r.logInfo(ctx, "CompareAndSwap successful on main store", "id", key)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "CompareAndSwap successful on main store")
+	}
 
 	if err := r.updateIndexesForCas(ctx, old, new); err != nil {
 		r.store.Store(key, old)
-		r.logInfo(ctx, "CAS index update failed, rolled back main store", "id", key, "error", err)
+		if r.logEnabled {
+			opLogger.ErrorContext(ctx, "CAS index update failed, rolled back main store", "error", err)
+		}
 		return false, err
 	}
 
 	r.notify("cas", new)
-	r.logInfo(ctx, "CompareAndSwap completed successfully", "id", key)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "CompareAndSwap completed successfully", "finalName", new.EntityName())
+	}
 	return true, nil
 }
+
 func (r *RepoImpl[T]) updateIndexesForCas(ctx context.Context, old T, new T) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	r.logInfo(ctx, "Updating indexes for CAS operation", "id", new.GetBase().ID)
+	opLogger := r.logger.With("op", "cas-index-update", "id", new.GetBase().ID)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "Updating indexes for CAS operation")
+	}
 	updatedIndexes := make(map[string]Indexer[T])
 
 	for name, idx := range r.indexes {
-		// Use slog's structured logging to provide context for each index operation
-		indexLogger := slog.Default().With("indexName", name, "id", new.GetBase().ID)
-
-		indexLogger.Info("Deleting old object from index")
+		if r.logEnabled {
+			opLogger.InfoContext(ctx, "Deleting old object from index", "indexName", name)
+		}
 		idx.Delete(ctx, old)
 
 		if err := idx.Insert(ctx, new); err != nil {
-			indexLogger.Error("Failed to insert new object, starting index rollback", "error", err)
-
-			// Rollback: Re-insert the old object into indexes that were already updated
+			if r.logEnabled {
+				opLogger.ErrorContext(ctx, "Failed to insert new object, starting index rollback", "indexName", name, "error", err)
+			}
 			for _, rollbackIdx := range updatedIndexes {
 				rollbackIdx.Insert(ctx, old)
 			}
-
-			// Re-insert the old object into the index where the new one failed
 			idx.Insert(ctx, old)
-			indexLogger.Info("Index rollback for CAS complete")
+			if r.logEnabled {
+				opLogger.InfoContext(ctx, "Index rollback for CAS complete")
+			}
 			return fmt.Errorf("failed to update index %s during CAS: %w", name, err)
 		}
 		updatedIndexes[name] = idx
-		indexLogger.Info("Successfully updated index")
+		if r.logEnabled {
+			opLogger.InfoContext(ctx, "Successfully updated index", "indexName", name)
+		}
 	}
 
-	r.logInfo(ctx, "All indexes updated successfully for CAS operation", "id", new.GetBase().ID)
+	if r.logEnabled {
+		opLogger.InfoContext(ctx, "All indexes updated successfully for CAS operation")
+	}
 	return nil
 }
 

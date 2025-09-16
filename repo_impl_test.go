@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
+	"os"
 	"testing"
 )
 
@@ -16,6 +18,10 @@ type User struct {
 
 func (u *User) GetBase() *BaseModel {
 	return &u.BaseModel
+}
+
+func (u *User) EntityName() string {
+	return "user"
 }
 
 func (u *User) String() string {
@@ -31,7 +37,8 @@ func UserEmail(u *User) string {
 
 func TestNewRepo(t *testing.T) {
 	ctx := context.Background()
-	userRepo := NewRepo[*User]()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	userRepo := NewRepoWithLogs[*User]()
 	userRepo.AddIndex(ctx, "by_name", NewIndex[string, *User](UserName, cmp.Less[string]))
 	userRepo.AddIndex(ctx, "by_email", NewIndex[string, *User](UserEmail, cmp.Less[string]))
 	userRepo.Create(ctx, &User{

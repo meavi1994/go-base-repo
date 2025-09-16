@@ -23,6 +23,7 @@ type BaseModel struct {
 // Entity interface for any object stored in Repo.
 type Entity interface {
 	GetBase() *BaseModel
+	EntityName() string
 }
 
 type Event[T any] struct {
