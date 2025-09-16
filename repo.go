@@ -39,7 +39,7 @@ type Repo[T Entity] interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	GetAll(ctx context.Context) []T
 	WithStore(fn func(store *sync.Map))
-
+	CompareAndSwap(ctx context.Context, key uuid.UUID, old T, new T) (bool, error)
 	// Index support
 	AddIndex(ctx context.Context, name string, idx Indexer[T])
 	GetIndex(ctx context.Context, name string) (Indexer[T], bool)
