@@ -27,9 +27,9 @@ func UserEmailLessFunc(u, b *User) bool {
 
 func TestNewRepo(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	indexes := []*btree.BTreeG[*User]{
-		btree.NewG[*User](2, UserNameLessFunc),
-		btree.NewG[*User](2, UserEmailLessFunc),
+	indexes := map[string]*btree.BTreeG[*User]{
+		"user_name":  btree.NewG[*User](2, UserNameLessFunc),
+		"user_email": btree.NewG[*User](2, UserEmailLessFunc),
 	}
 	userRepo := NewBaseRepo[*User](indexes, nil)
 
@@ -47,11 +47,13 @@ func TestNewRepo(t *testing.T) {
 	})
 	fmt.Println(userRepo)
 	fmt.Println("first index")
-	for val := range indexes[0].Ascend {
+	userNameIndex, _ := userRepo.GetIndex("user_name")
+	for val := range userNameIndex.Ascend {
 		fmt.Println(val)
 	}
 	fmt.Println("second index")
-	for val := range indexes[1].Ascend {
+	userEmailIndex, _ := userRepo.GetIndex("user_email")
+	for val := range userEmailIndex.Ascend {
 		fmt.Println(val)
 	}
 

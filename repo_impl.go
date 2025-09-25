@@ -41,6 +41,8 @@ type BaseRepo[T Entity] interface {
 	Find(predicate func(T) bool) []T
 	Upsert(val T) (uuid.UUID, error)
 	CompareAndSwap(id uuid.UUID, oldVal T, newVal T) (bool, error)
+	GetIndex(name string) (*btree.BTreeG[T], bool)
+	AddIndex(name string, lessFn func(a, b T) bool) error
 	String() string
 }
 
@@ -56,16 +58,20 @@ type Event[T Entity] struct {
 
 type baseRepo[T Entity] struct {
 	values      sync.Map
-	indexes     []*btree.BTreeG[T]
-	indexLocks  []sync.Mutex
+	indexes     map[string]*btree.BTreeG[T]
+	indexLocks  map[string]*sync.Mutex
 	subscribers []chan *Event[T]
 }
 
 // Constructor
-func NewBaseRepo[T Entity](indexes []*btree.BTreeG[T], subscribers []chan *Event[T]) BaseRepo[T] {
+func NewBaseRepo[T Entity](indexes map[string]*btree.BTreeG[T], subscribers []chan *Event[T]) BaseRepo[T] {
+	locks := make(map[string]*sync.Mutex, len(indexes))
+	for name := range indexes {
+		locks[name] = &sync.Mutex{}
+	}
 	return &baseRepo[T]{
 		indexes:     indexes,
-		indexLocks:  make([]sync.Mutex, len(indexes)),
+		indexLocks:  locks,
 		subscribers: subscribers,
 	}
 }
@@ -73,18 +79,20 @@ func NewBaseRepo[T Entity](indexes []*btree.BTreeG[T], subscribers []chan *Event
 // ----------------- Internal Helpers -----------------
 
 func (a *baseRepo[T]) addToIndexes(val T) {
-	for i, index := range a.indexes {
-		a.indexLocks[i].Lock()
+	for name, index := range a.indexes {
+		lock := a.indexLocks[name]
+		lock.Lock()
 		index.ReplaceOrInsert(val)
-		a.indexLocks[i].Unlock()
+		lock.Unlock()
 	}
 }
 
 func (a *baseRepo[T]) removeFromIndexes(val T) {
-	for i, index := range a.indexes {
-		a.indexLocks[i].Lock()
+	for name, index := range a.indexes {
+		lock := a.indexLocks[name]
+		lock.Lock()
 		index.Delete(val)
-		a.indexLocks[i].Unlock()
+		lock.Unlock()
 	}
 }
 
@@ -230,9 +238,35 @@ func (a *baseRepo[T]) CompareAndSwap(id uuid.UUID, oldVal T, newVal T) (swapped 
 	return true, nil
 }
 
+// ----------------- Index Access -----------------
+
+func (a *baseRepo[T]) GetIndex(name string) (*btree.BTreeG[T], bool) {
+	index, ok := a.indexes[name]
+	return index, ok
+}
+
+// AddIndex creates and registers a new index with the given name and comparator
+func (a *baseRepo[T]) AddIndex(name string, lessFn func(a, b T) bool) error {
+	if _, exists := a.indexes[name]; exists {
+		return fmt.Errorf("index with name %q already exists", name)
+	}
+
+	tree := btree.NewG(2, lessFn)
+	a.indexes[name] = tree
+	a.indexLocks[name] = &sync.Mutex{}
+
+	// Populate index with existing values
+	a.values.Range(func(_, v any) bool {
+		tree.ReplaceOrInsert(v.(T))
+		return true
+	})
+
+	return nil
+}
+
+// ----------------- String -----------------
+
 func (a *baseRepo[T]) String() string {
-	var sb strings.Builder
-	sb.WriteString("[")
 	var all []string
 	for _, el := range a.ListAll() {
 		all = append(all, fmt.Sprintf("%v", el))
