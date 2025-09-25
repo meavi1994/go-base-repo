@@ -41,7 +41,7 @@ type BaseRepo[T Entity] interface {
 	Find(predicate func(T) bool) []T
 	Upsert(val T) (uuid.UUID, error)
 	CompareAndSwap(id uuid.UUID, oldVal T, newVal T) (bool, error)
-	GetIndex(name string) (*btree.BTreeG[T], bool)
+	GetIndex(name string) (BTreeG[T], bool)
 	AddIndex(name string, lessFn func(a, b T) bool) error
 	String() string
 }
@@ -58,20 +58,18 @@ type Event[T Entity] struct {
 
 type baseRepo[T Entity] struct {
 	values      sync.Map
-	indexes     map[string]*btree.BTreeG[T]
-	indexLocks  map[string]*sync.Mutex
+	indexes     map[string]BTreeG[T]
 	subscribers []chan *Event[T]
 }
 
 // Constructor
-func NewBaseRepo[T Entity](indexes map[string]*btree.BTreeG[T], subscribers []chan *Event[T]) BaseRepo[T] {
+func NewBaseRepo[T Entity](indexes map[string]BTreeG[T], subscribers []chan *Event[T]) BaseRepo[T] {
 	locks := make(map[string]*sync.Mutex, len(indexes))
 	for name := range indexes {
 		locks[name] = &sync.Mutex{}
 	}
 	return &baseRepo[T]{
 		indexes:     indexes,
-		indexLocks:  locks,
 		subscribers: subscribers,
 	}
 }
@@ -79,20 +77,14 @@ func NewBaseRepo[T Entity](indexes map[string]*btree.BTreeG[T], subscribers []ch
 // ----------------- Internal Helpers -----------------
 
 func (a *baseRepo[T]) addToIndexes(val T) {
-	for name, index := range a.indexes {
-		lock := a.indexLocks[name]
-		lock.Lock()
+	for _, index := range a.indexes {
 		index.ReplaceOrInsert(val)
-		lock.Unlock()
 	}
 }
 
 func (a *baseRepo[T]) removeFromIndexes(val T) {
-	for name, index := range a.indexes {
-		lock := a.indexLocks[name]
-		lock.Lock()
+	for _, index := range a.indexes {
 		index.Delete(val)
-		lock.Unlock()
 	}
 }
 
@@ -240,7 +232,7 @@ func (a *baseRepo[T]) CompareAndSwap(id uuid.UUID, oldVal T, newVal T) (swapped 
 
 // ----------------- Index Access -----------------
 
-func (a *baseRepo[T]) GetIndex(name string) (*btree.BTreeG[T], bool) {
+func (a *baseRepo[T]) GetIndex(name string) (BTreeG[T], bool) {
 	index, ok := a.indexes[name]
 	return index, ok
 }
@@ -253,7 +245,6 @@ func (a *baseRepo[T]) AddIndex(name string, lessFn func(a, b T) bool) error {
 
 	tree := btree.NewG(2, lessFn)
 	a.indexes[name] = tree
-	a.indexLocks[name] = &sync.Mutex{}
 
 	// Populate index with existing values
 	a.values.Range(func(_, v any) bool {

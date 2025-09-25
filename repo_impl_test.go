@@ -2,7 +2,6 @@ package base_repo
 
 import (
 	"fmt"
-	"github.com/google/btree"
 	"log/slog"
 	"os"
 	"testing"
@@ -27,9 +26,9 @@ func UserEmailLessFunc(u, b *User) bool {
 
 func TestNewRepo(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	indexes := map[string]*btree.BTreeG[*User]{
-		"user_name":  btree.NewG[*User](2, UserNameLessFunc),
-		"user_email": btree.NewG[*User](2, UserEmailLessFunc),
+	indexes := map[string]BTreeG[*User]{
+		"user_name":  NewSafeBTreeG[*User](2, UserNameLessFunc),
+		"user_email": NewSafeBTreeG[*User](2, UserEmailLessFunc),
 	}
 	userRepo := NewBaseRepo[*User](indexes, nil)
 
