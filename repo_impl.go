@@ -3,8 +3,10 @@ package base_repo
 import (
 	"errors"
 	"fmt"
-	"github.com/google/btree"
 	"github.com/google/uuid"
+	functional "github.com/meavi1994/go-functional"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,18 +33,19 @@ type Entity interface {
 
 type BaseRepo[T Entity] interface {
 	Add(val T) (uuid.UUID, error)
-	GetById(id uuid.UUID) (T, error)
-	GetAllByIds(ids []uuid.UUID) (map[uuid.UUID]T, error)
+	Upsert(val T) (uuid.UUID, error)
 	Update(id uuid.UUID, val T) error
 	Delete(id uuid.UUID) error
+	CompareAndSwap(id uuid.UUID, oldVal T, newVal T) (bool, error)
+
+	GetById(id uuid.UUID) (T, error)
+	GetAllByIds(ids []uuid.UUID) (map[uuid.UUID]T, error)
 	Exists(id uuid.UUID) bool
 	Count() int
 	ListAll() []T
 	Find(predicate func(T) bool) []T
-	Upsert(val T) (uuid.UUID, error)
-	CompareAndSwap(id uuid.UUID, oldVal T, newVal T) (bool, error)
+
 	GetIndex(name string) (BTreeG[T], bool)
-	AddIndex(name string, lessFn func(a, b T) bool) error
 	String() string
 }
 
@@ -130,24 +133,6 @@ func (a *baseRepo[T]) Upsert(val T) (uuid.UUID, error) {
 	return baseModel.ID, nil
 }
 
-func (a *baseRepo[T]) GetById(id uuid.UUID) (T, error) {
-	var zero T
-	if val, ok := a.values.Load(id); ok {
-		return val.(T), nil
-	}
-	return zero, errors.New("entity not found")
-}
-
-func (a *baseRepo[T]) GetAllByIds(ids []uuid.UUID) (map[uuid.UUID]T, error) {
-	result := make(map[uuid.UUID]T, len(ids))
-	for _, id := range ids {
-		if val, ok := a.values.Load(id); ok {
-			result[id] = val.(T)
-		}
-	}
-	return result, nil
-}
-
 func (a *baseRepo[T]) Update(id uuid.UUID, val T) error {
 	_, ok := a.values.Load(id)
 	if !ok {
@@ -175,41 +160,6 @@ func (a *baseRepo[T]) Delete(id uuid.UUID) error {
 	return nil
 }
 
-func (a *baseRepo[T]) Exists(id uuid.UUID) bool {
-	_, ok := a.values.Load(id)
-	return ok
-}
-
-func (a *baseRepo[T]) Count() int {
-	count := 0
-	a.values.Range(func(_, _ any) bool {
-		count++
-		return true
-	})
-	return count
-}
-
-func (a *baseRepo[T]) ListAll() []T {
-	result := []T{}
-	a.values.Range(func(_, v any) bool {
-		result = append(result, v.(T))
-		return true
-	})
-	return result
-}
-
-func (a *baseRepo[T]) Find(predicate func(T) bool) []T {
-	result := []T{}
-	a.values.Range(func(_, v any) bool {
-		entity := v.(T)
-		if predicate(entity) {
-			result = append(result, entity)
-		}
-		return true
-	})
-	return result
-}
-
 // ----------------- CompareAndSwap -----------------
 
 func (a *baseRepo[T]) CompareAndSwap(id uuid.UUID, oldVal T, newVal T) (swapped bool, err error) {
@@ -230,29 +180,52 @@ func (a *baseRepo[T]) CompareAndSwap(id uuid.UUID, oldVal T, newVal T) (swapped 
 	return true, nil
 }
 
+// -- read methods
+
+func (a *baseRepo[T]) GetById(id uuid.UUID) (T, error) {
+	var zero T
+	if val, ok := a.values.Load(id); ok {
+		return val.(T), nil
+	}
+	return zero, errors.New("entity not found")
+}
+
+func (a *baseRepo[T]) GetAllByIds(ids []uuid.UUID) (map[uuid.UUID]T, error) {
+	return maps.Collect(
+		functional.SyncGetAllByKeys[uuid.UUID, T](&a.values, ids),
+	), nil
+}
+
+func (a *baseRepo[T]) Exists(id uuid.UUID) bool {
+	_, ok := a.values.Load(id)
+	return ok
+}
+
+func (a *baseRepo[T]) Count() int {
+	count := 0
+	for _, _ = range a.values.Range {
+		count++
+	}
+	return count
+}
+
+func (a *baseRepo[T]) ListAll() []T {
+	return slices.Collect(functional.SyncValues[uuid.UUID, T](&a.values))
+}
+
+func (a *baseRepo[T]) Find(predicate func(T) bool) []T {
+	return slices.Collect[T](
+		functional.Filter(
+			functional.SyncValues[uuid.UUID, T](&a.values),
+			predicate),
+	)
+}
+
 // ----------------- Index Access -----------------
 
 func (a *baseRepo[T]) GetIndex(name string) (BTreeG[T], bool) {
 	index, ok := a.indexes[name]
 	return index, ok
-}
-
-// AddIndex creates and registers a new index with the given name and comparator
-func (a *baseRepo[T]) AddIndex(name string, lessFn func(a, b T) bool) error {
-	if _, exists := a.indexes[name]; exists {
-		return fmt.Errorf("index with name %q already exists", name)
-	}
-
-	tree := btree.NewG(2, lessFn)
-	a.indexes[name] = tree
-
-	// Populate index with existing values
-	a.values.Range(func(_, v any) bool {
-		tree.ReplaceOrInsert(v.(T))
-		return true
-	})
-
-	return nil
 }
 
 // ----------------- String -----------------
